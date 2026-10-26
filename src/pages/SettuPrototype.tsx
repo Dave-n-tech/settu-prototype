@@ -1,17 +1,64 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
-  Home, Receipt, Plus, User, ChevronLeft, Share2,
-  Download, MoreHorizontal, Check, Copy, ShieldCheck, Trash2
+  Home, Receipt, Plus, User, ChevronLeft, ChevronRight, Share2,
+  Download, MoreHorizontal, Check, Copy, ShieldCheck, X, Trash2,
+  MessageCircle, Mail, MessagesSquare, Search, CheckCheck, Link2,
+  Phone, Video, MoreVertical, Smile, Mic, Paperclip,
 } from "lucide-react";
 
 const FONT_IMPORT = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 `;
 
-const naira = (n: number | string): string =>
+const naira = (n: number): string =>
   "₦" + Number(n).toLocaleString("en-NG", { maximumFractionDigits: 0 });
 
-const seed = {
+// ---------- Types ----------
+type InvoiceStatus = "paid" | "pending" | "sent" | "expired" | "draft";
+
+interface LineItem {
+  d: string;
+  q: number;
+  p: number;
+}
+
+interface Invoice {
+  id: string;
+  client: string;
+  amount: number;
+  status: InvoiceStatus;
+  date: string;
+  items?: LineItem[];
+  phone?: string;
+  quick?: boolean;
+}
+
+type Screen =
+  | "home"
+  | "invoices"
+  | "create"
+  | "quickpay"
+  | "preview"
+  | "requestpay"
+  | "share"
+  | "buyerview"
+  | "profile"
+  | "waoverlay"
+  | "wacontacts"
+  | "wachat";
+
+type NavigateFn = (screen: Screen, data?: Invoice | null) => void;
+
+interface ScreenProps {
+  go: NavigateFn;
+}
+
+interface InvoiceScreenProps extends ScreenProps {
+  invoice: Invoice | null;
+}
+
+// ---------- Seed data ----------
+const seed: { business: { name: string; cat: string; initials: string }; invoices: Invoice[] } = {
   business: { name: "Jessy's Cuisine", cat: "Catering & Events", initials: "JC" },
   invoices: [
     {
@@ -45,7 +92,7 @@ const seed = {
   ],
 };
 
-const statusStyle = {
+const statusStyle: Record<InvoiceStatus, { bg: string; fg: string; label: string }> = {
   paid: { bg: "#E7F3EC", fg: "#1F8A5F", label: "Paid" },
   pending: { bg: "#FDF2E2", fg: "#B9781F", label: "Pending" },
   sent: { bg: "#EDEBFB", fg: "#5B4FC2", label: "Sent" },
@@ -53,12 +100,9 @@ const statusStyle = {
   draft: { bg: "#EFEAE0", fg: "#8A8578", label: "Draft" },
 };
 
-interface StatusPillProps {
-  s: string;
-}
-
-function StatusPill({ s }: StatusPillProps) {
-  const st = statusStyle[s as keyof typeof statusStyle] || statusStyle.draft;
+// ---------- Shared UI ----------
+function StatusPill({ s }: { s: InvoiceStatus }) {
+  const st = statusStyle[s] || statusStyle.draft;
   return (
     <span
       style={{ background: st.bg, color: st.fg }}
@@ -69,13 +113,7 @@ function StatusPill({ s }: StatusPillProps) {
   );
 }
 
-interface TopBarProps {
-  title: string;
-  onBack?: () => void;
-  right?: React.ReactNode;
-}
-
-function TopBar({ title, onBack, right }: TopBarProps) {
+function TopBar({ title, onBack, right }: { title: string; onBack?: () => void; right?: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between px-5 pt-5 pb-3">
       <div className="w-8">
@@ -96,12 +134,7 @@ function TopBar({ title, onBack, right }: TopBarProps) {
   );
 }
 
-interface EyebrowProps {
-  children: React.ReactNode;
-  color?: string;
-}
-
-function Eyebrow({ children, color = "#8A8578" }: EyebrowProps) {
+function Eyebrow({ children, color = "#8A8578" }: { children: React.ReactNode; color?: string }) {
   return (
     <div
       style={{ fontFamily: "'IBM Plex Mono', monospace", color, letterSpacing: "0.08em" }}
@@ -112,12 +145,8 @@ function Eyebrow({ children, color = "#8A8578" }: EyebrowProps) {
   );
 }
 
-interface DashboardProps {
-  go: (screen: string, data?: any) => void;
-}
-
 // ---------- Dashboard ----------
-function Dashboard({ go }: DashboardProps) {
+function Dashboard({ go }: ScreenProps) {
   const totalToday = 68000;
   const totalWeek = 341500;
   return (
@@ -234,12 +263,8 @@ function Dashboard({ go }: DashboardProps) {
   );
 }
 
-interface InvoicesListProps {
-  go: (screen: string, data?: any) => void;
-}
-
 // ---------- Invoices list ----------
-function InvoicesList({ go }: InvoicesListProps) {
+function InvoicesList({ go }: ScreenProps) {
   return (
     <div className="pb-28">
       <TopBar title="Invoices" />
@@ -270,25 +295,27 @@ function InvoicesList({ go }: InvoicesListProps) {
   );
 }
 
-interface CreateInvoiceProps {
-  go: (screen: string, data?: any) => void;
+// ---------- Create Invoice ----------
+interface DraftItem {
+  desc: string;
+  qty: number | string;
+  price: number | string;
 }
 
-// ---------- Create Invoice ----------
-function CreateInvoice({ go }: CreateInvoiceProps) {
-  const [client, setClient] = useState("");
-  const [phone, setPhone] = useState("");
-  const [items, setItems] = useState([{ desc: "", qty: 1, price: "" }]);
+function CreateInvoice({ go }: ScreenProps) {
+  const [client, setClient] = useState<string>("");
+  const [phone, setPhone] = useState<string>("");
+  const [items, setItems] = useState<DraftItem[]>([{ desc: "", qty: 1, price: "" }]);
 
-  const total = items.reduce((s: number, it: any) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
+  const total = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
 
-  const updateItem = (i: number, key: string, val: any): void => {
+  const updateItem = <K extends keyof DraftItem>(i: number, key: K, val: DraftItem[K]) => {
     const copy = [...items];
-    (copy[i] as any)[key] = val;
+    copy[i] = { ...copy[i], [key]: val };
     setItems(copy);
   };
-  const addItem = (): void => setItems([...items, { desc: "", qty: 1, price: "" }]);
-  const removeItem = (i: number): void => setItems(items.filter((_: any, idx: number) => idx !== i));
+  const addItem = () => setItems([...items, { desc: "", qty: 1, price: "" }]);
+  const removeItem = (i: number) => setItems(items.filter((_, idx) => idx !== i));
 
   return (
     <div className="pb-32">
@@ -372,7 +399,7 @@ function CreateInvoice({ go }: CreateInvoiceProps) {
       <div className="settu-nav fixed bottom-0 left-0 right-0 mx-auto p-4" style={{ background: "linear-gradient(transparent, #F5F4F0 30%)" }}>
         <button
           onClick={() => {
-            const cleanItems = items
+            const cleanItems: LineItem[] = items
               .filter((it) => it.desc.trim() !== "" && Number(it.price) > 0)
               .map((it) => ({ d: it.desc, q: Number(it.qty) || 1, p: Number(it.price) || 0 }));
             go("preview", {
@@ -395,15 +422,11 @@ function CreateInvoice({ go }: CreateInvoiceProps) {
 }
 
 // ---------- Quick Payment Link (no invoice) ----------
-interface QuickPaymentProps {
-  go: (screen: string, data?: any) => void;
-}
-
-function QuickPayment({ go }: QuickPaymentProps) {
-  const [buyer, setBuyer] = useState("");
-  const [phone, setPhone] = useState("");
-  const [desc, setDesc] = useState("");
-  const [price, setPrice] = useState("");
+function QuickPayment({ go }: ScreenProps) {
+  const [buyer, setBuyer] = useState<string>("");
+  const [phone, setPhone] = useState<string>("");
+  const [desc, setDesc] = useState<string>("");
+  const [price, setPrice] = useState<string>("");
 
   const amount = Number(price) || 0;
   const canContinue = desc.trim() !== "" && amount > 0;
@@ -492,15 +515,12 @@ function QuickPayment({ go }: QuickPaymentProps) {
     </div>
   );
 }
-interface InvoicePreviewProps {
-  go: (screen: string, data?: any) => void;
-  invoice?: any;
-}
 
-function InvoicePreview({ go, invoice }: InvoicePreviewProps) {
+// ---------- Invoice Preview ----------
+function InvoicePreview({ go, invoice }: InvoiceScreenProps) {
   const inv = invoice || seed.invoices[0];
-  const lineItems = inv.items && inv.items.length ? inv.items : [{ d: "Invoice total", q: 1, p: inv.amount }];
-  const subtotal = lineItems.reduce((s: number, it: any) => s + it.q * it.p, 0);
+  const lineItems: LineItem[] = inv.items && inv.items.length ? inv.items : [{ d: "Invoice total", q: 1, p: inv.amount }];
+  const subtotal = lineItems.reduce((s, it) => s + it.q * it.p, 0);
 
   return (
     <div className="pb-32">
@@ -533,7 +553,7 @@ function InvoicePreview({ go, invoice }: InvoicePreviewProps) {
           </div>
 
           <div className="p-5 space-y-3">
-            {lineItems.map((it: any, i: number) => (
+            {lineItems.map((it, i) => (
               <div key={i} className="flex items-center justify-between">
                 <div className="text-[12.5px] pr-3" style={{ color: "#3A362E" }}>
                   {it.d} <span style={{ color: "#8A8578" }}>× {it.q}</span>
@@ -577,19 +597,14 @@ function InvoicePreview({ go, invoice }: InvoicePreviewProps) {
   );
 }
 
-interface RequestPaymentProps {
-  go: (screen: string, data?: any) => void;
-  invoice?: any;
-}
-
 // ---------- Request Payment (fee split + share) ----------
-function RequestPayment({ go, invoice }: RequestPaymentProps) {
+function RequestPayment({ go, invoice }: InvoiceScreenProps) {
   const inv = invoice || seed.invoices[0];
   const amount = inv.items && inv.items.length
-    ? inv.items.reduce((s: number, it: any) => s + it.q * it.p, 0)
+    ? inv.items.reduce((s, it) => s + it.q * it.p, 0)
     : inv.amount;
-  const [buyerPays, setBuyerPays] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const [buyerPays, setBuyerPays] = useState<boolean>(true);
+  const [copied, setCopied] = useState<boolean>(false);
   const fee = Math.min(Math.round(amount * 0.015) + 100, 2000);
   const link = "settu.app/pay/" + inv.id.toLowerCase().replace(/[^a-z0-9]/g, "") + "x9k";
 
@@ -679,7 +694,7 @@ function RequestPayment({ go, invoice }: RequestPaymentProps) {
 
       <div className="settu-nav fixed bottom-0 left-0 right-0 mx-auto p-4" style={{ background: "linear-gradient(transparent, #F5F4F0 30%)" }}>
         <button
-          onClick={() => go("share", inv)}
+          onClick={() => go("waoverlay", inv)}
           className="w-full py-3.5 rounded-xl font-semibold text-[13.5px] flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
           style={{ background: "#25D366", color: "#08210F" }}
         >
@@ -690,14 +705,210 @@ function RequestPayment({ go, invoice }: RequestPaymentProps) {
   );
 }
 
-// ---------- Share confirmation ----------
-interface ShareSheetProps {
-  go: (screen: string, data?: any) => void;
-  invoice?: any;
+// ---------- Mock: native share sheet ----------
+interface ShareApp {
+  label: string;
+  icon: any;
+  bg: string;
+  isTarget?: boolean;
 }
 
-function ShareSheet({ go, invoice }: ShareSheetProps) {
-  const [copied, setCopied] = useState(false);
+function ShareSheetOverlay({ go, invoice }: InvoiceScreenProps) {
+  const [tapped, setTapped] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!tapped) return;
+    const t = setTimeout(() => go("wacontacts", invoice), 550);
+    return () => clearTimeout(t);
+  }, [tapped]);
+
+  const apps: ShareApp[] = [
+    { label: "Messages", icon: MessagesSquare, bg: "#34C759" },
+    { label: "Mail", icon: Mail, bg: "#5B9DF9" },
+    { label: "WhatsApp", icon: MessageCircle, bg: "#25D366", isTarget: true },
+    { label: "Copy Link", icon: Link2, bg: "#8A8578" },
+    { label: "More", icon: MoreHorizontal, bg: "#B4AC98" },
+  ];
+
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col justify-end" style={{ background: "rgba(16,38,31,0.45)" }}>
+      <div
+        className="rounded-t-3xl px-5 pt-5 pb-8 transition-transform duration-300"
+        style={{ background: "#FFFFFF" }}
+      >
+        <div className="w-9 h-1 rounded-full mx-auto mb-4" style={{ background: "#E4DCC8" }} />
+        <div className="flex items-center gap-2.5 pb-4" style={{ borderBottom: "1px solid #EFEAE0" }}>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "#10261F" }}>
+            <Link2 size={14} color="#FBF7EF" />
+          </div>
+          <div className="text-[11.5px] truncate" style={{ color: "#8A8578" }}>settu.app/pay/inv005x9k</div>
+        </div>
+
+        <div className="grid grid-cols-5 gap-2 mt-5">
+          {apps.map((a) => {
+            const Icon = a.icon;
+            const active = tapped && a.isTarget;
+            return (
+              <button
+                key={a.label}
+                onClick={() => a.isTarget && setTapped(true)}
+                className="flex flex-col items-center gap-1.5"
+                style={{ opacity: tapped && !a.isTarget ? 0.35 : 1, transition: "opacity 0.2s" }}
+              >
+                <div
+                  className="w-12 h-12 rounded-2xl flex items-center justify-center transition-transform"
+                  style={{ background: a.bg, transform: active ? "scale(1.12)" : "scale(1)" }}
+                >
+                  <Icon size={20} color="#FFFFFF" />
+                </div>
+                <span className="text-[9.5px] font-medium" style={{ color: "#3A362E" }}>{a.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="text-center mt-6">
+          <span className="text-[10px]" style={{ color: "#B4AC98" }}>Tap WhatsApp to continue</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Mock: WhatsApp contact picker ----------
+interface MockContact {
+  name: string;
+  sub: string;
+  target?: boolean;
+}
+
+function WhatsAppContacts({ go, invoice }: InvoiceScreenProps) {
+  const contacts: MockContact[] = [
+    { name: invoice?.client || "Buyer", sub: "online", target: true },
+    { name: "Adaeze Okonkwo", sub: "last seen today at 11:42" },
+    { name: "Catering Suppliers NG", sub: "12 messages" },
+    { name: "Emeka (Rider)", sub: "yesterday" },
+    { name: "Mum", sub: "Tuesday" },
+  ];
+
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col" style={{ background: "#FFFFFF" }}>
+      <div className="px-5 pt-6 pb-4" style={{ background: "#075E54" }}>
+        <div className="flex items-center gap-3">
+          <button onClick={() => go("requestpay", invoice)}>
+            <ChevronLeft size={20} color="#FFFFFF" />
+          </button>
+          <div className="text-[15px] font-semibold" style={{ color: "#FFFFFF", fontFamily: "'Space Grotesk', sans-serif" }}>
+            Share via
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mt-4 px-3 py-2.5 rounded-xl" style={{ background: "#0C6B5D" }}>
+          <Search size={14} color="#B7DED4" />
+          <span className="text-[12px]" style={{ color: "#B7DED4" }}>Search contacts and chats</span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {contacts.map((c, i) => (
+          <button
+            key={i}
+            onClick={() => c.target && go("wachat", invoice)}
+            className="w-full flex items-center gap-3 px-5 py-3"
+            style={{ borderBottom: "1px solid #F2EFE6", opacity: c.target ? 1 : 0.55 }}
+          >
+            <div
+              className="w-11 h-11 rounded-full flex items-center justify-center text-[13px] font-semibold shrink-0"
+              style={{ background: c.target ? "#25D366" : "#D9D2BF", color: "#FFFFFF", fontFamily: "'Space Grotesk', sans-serif" }}
+            >
+              {c.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}
+            </div>
+            <div className="text-left flex-1">
+              <div className="text-[13.5px] font-medium" style={{ color: "#10261F" }}>{c.name}</div>
+              <div className="text-[11px] mt-0.5" style={{ color: "#8A8578" }}>{c.sub}</div>
+            </div>
+            {c.target && (
+              <span className="text-[9.5px] font-semibold px-2 py-1 rounded-full" style={{ background: "#E7F3EC", color: "#1F8A5F" }}>
+                Tap to send
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Mock: WhatsApp chat thread ----------
+function WhatsAppChat({ go, invoice }: InvoiceScreenProps) {
+  const [sent, setSent] = useState<boolean>(false);
+  const clientName = invoice?.client || "Buyer";
+  const amount = invoice?.items && invoice.items.length
+    ? invoice.items.reduce((s, it) => s + it.q * it.p, 0)
+    : invoice?.amount || 0;
+
+  useEffect(() => {
+    const t = setTimeout(() => setSent(true), 500);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <div className="absolute inset-0 z-30 flex flex-col" style={{ background: "#ECE5DD" }}>
+      <div className="px-5 pt-6 pb-3 flex items-center gap-3" style={{ background: "#075E54" }}>
+        <button onClick={() => go("wacontacts", invoice)}>
+          <ChevronLeft size={20} color="#FFFFFF" />
+        </button>
+        <div
+          className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-semibold"
+          style={{ background: "#25D366", color: "#FFFFFF" }}
+        >
+          {clientName.split(" ").map((w) => w[0]).slice(0, 2).join("")}
+        </div>
+        <div>
+          <div className="text-[13.5px] font-semibold" style={{ color: "#FFFFFF" }}>{clientName}</div>
+          <div className="text-[10.5px]" style={{ color: "#B7DED4" }}>online</div>
+        </div>
+      </div>
+
+      <div className="flex-1 px-4 py-5 flex flex-col justify-end">
+        {sent && (
+          <div className="self-end max-w-[78%] rounded-xl rounded-tr-sm p-2.5" style={{ background: "#DCF8C6" }}>
+            <div className="rounded-lg overflow-hidden" style={{ background: "#FFFFFF" }}>
+              <div className="p-3">
+                <div className="text-[12px] font-semibold" style={{ color: "#10261F" }}>Payment request from {seed.business.name}</div>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#1F8A5F" }} className="text-[13px] font-semibold mt-1">
+                  {naira(amount)}
+                </div>
+                <div className="text-[10.5px] mt-1" style={{ color: "#8A8578" }}>settu.app/pay/inv005x9k</div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-1 mt-1.5 pr-0.5">
+              <span className="text-[10px]" style={{ color: "#5A6B5F" }}>11:47 AM</span>
+              <CheckCheck size={13} color="#34B7F1" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="px-3 pb-4 flex items-center gap-2">
+        <div className="flex-1 px-4 py-2.5 rounded-full text-[12px]" style={{ background: "#FFFFFF", color: "#B4AC98" }}>
+          Message
+        </div>
+      </div>
+
+      <button
+        onClick={() => go("share", invoice)}
+        className="mx-4 mb-4 py-3 rounded-xl font-semibold text-[12px]"
+        style={{ background: "#10261F", color: "#FBF7EF" }}
+      >
+        Continue prototype →
+      </button>
+    </div>
+  );
+}
+
+// ---------- Share confirmation ----------
+function ShareSheet({ go, invoice }: InvoiceScreenProps) {
+  const [copied, setCopied] = useState<boolean>(false);
   return (
     <div className="pb-28 flex flex-col items-center px-6 pt-16 text-center">
       <div className="w-16 h-16 rounded-full flex items-center justify-center mb-5" style={{ background: "#E7F3EC" }}>
@@ -706,7 +917,7 @@ function ShareSheet({ go, invoice }: ShareSheetProps) {
       <div className="text-[17px] font-semibold" style={{ fontFamily: "'Space Grotesk', sans-serif", color: "#10261F" }}>
         Payment link sent
       </div>
-      <div className="text-[12.5px] mt-2 max-w-60" style={{ color: "#8A8578" }}>
+      <div className="text-[12.5px] mt-2 max-w-[240px]" style={{ color: "#8A8578" }}>
         {invoice?.client || "Your client"} will get a WhatsApp message with the link. You'll be notified the moment they pay.
       </div>
 
@@ -741,17 +952,12 @@ function ShareSheet({ go, invoice }: ShareSheetProps) {
   );
 }
 
-interface BuyerViewProps {
-  go: (screen: string, data?: any) => void;
-  invoice?: any;
-}
-
 // ---------- Buyer-facing pay page ----------
-function BuyerView({ go, invoice }: BuyerViewProps) {
+function BuyerView({ go, invoice }: InvoiceScreenProps) {
   const inv = invoice || seed.invoices[0];
-  const lineItems = inv.items && inv.items.length ? inv.items : [{ d: "Invoice total", q: 1, p: inv.amount }];
-  const [paid, setPaid] = useState(false);
-  const amount = lineItems.reduce((s: number, it: any) => s + it.q * it.p, 0);
+  const lineItems: LineItem[] = inv.items && inv.items.length ? inv.items : [{ d: "Invoice total", q: 1, p: inv.amount }];
+  const [paid, setPaid] = useState<boolean>(false);
+  const amount = lineItems.reduce((s, it) => s + it.q * it.p, 0);
   const fee = Math.min(Math.round(amount * 0.015) + 100, 2000);
 
   if (paid) {
@@ -797,7 +1003,7 @@ function BuyerView({ go, invoice }: BuyerViewProps) {
       </div>
 
       <div className="mx-5 mt-5 rounded-2xl p-4" style={{ background: "#FFFFFF", border: "1px solid #E4DCC8" }}>
-        {lineItems.map((it: any, i: number) => (
+        {lineItems.map((it, i) => (
           <div key={i} className="flex items-center justify-between py-1.5 text-[12px]">
             <span style={{ color: "#3A362E" }}>{it.d} {it.q > 1 && <span style={{ color: "#8A8578" }}>× {it.q}</span>}</span>
             <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#10261F" }} className="tabular-nums">{naira(it.q * it.p)}</span>
@@ -866,6 +1072,12 @@ function BuyerView({ go, invoice }: BuyerViewProps) {
 
 // ---------- Profile ----------
 function Profile() {
+  const rows: [string, string][] = [
+    ["Payout account", "GTBank •••• 4471"],
+    ["WhatsApp number", "+234 803 xxx xx11"],
+    ["Category", "Catering & Events"],
+  ];
+
   return (
     <div className="pb-28">
       <TopBar title="Business profile" />
@@ -883,11 +1095,7 @@ function Profile() {
       </div>
 
       <div className="px-5 mt-6 space-y-2.5">
-        {[
-          ["Payout account", "GTBank •••• 4471"],
-          ["WhatsApp number", "+234 803 xxx xx11"],
-          ["Category", "Catering & Events"],
-        ].map(([label, value]) => (
+        {rows.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between p-3.5 rounded-xl" style={{ background: "#FFFFFF", border: "1px solid #E4DCC8" }}>
             <span className="text-[12px]" style={{ color: "#8A8578" }}>{label}</span>
             <span className="text-[12.5px] font-medium" style={{ color: "#10261F" }}>{value}</span>
@@ -899,23 +1107,37 @@ function Profile() {
 }
 
 // ---------- Root ----------
-export default function SettuPrototype() {
-  const [screen, setScreen] = useState<string>("home");
-  const [ctx, setCtx] = useState<any>(null);
+const OVERLAY_SCREENS: Screen[] = ["waoverlay", "wacontacts", "wachat"];
 
-  const go = (s: string, data?: any): void => {
-    setScreen(s);
-    if (data) setCtx(data);
+interface TabDef {
+  id: Screen;
+  label: string;
+  icon: any;
+}
+
+export default function SettuPrototype() {
+  const [screen, setScreen] = useState<Screen>("home");
+  const [overlay, setOverlay] = useState<Screen | null>(null);
+  const [ctx, setCtx] = useState<Invoice | null>(null);
+
+  const go: NavigateFn = (s, data) => {
+    if (OVERLAY_SCREENS.includes(s)) {
+      setOverlay(s);
+    } else {
+      setOverlay(null);
+      setScreen(s);
+    }
+    if (data !== undefined) setCtx(data);
     window.scrollTo?.(0, 0);
   };
 
-  const tabs: { id: string; label: string; icon: any }[] = [
+  const tabs: TabDef[] = [
     { id: "home", label: "Home", icon: Home },
     { id: "invoices", label: "Invoices", icon: Receipt },
     { id: "profile", label: "Profile", icon: User },
   ];
 
-  const showNav = ["home", "invoices", "profile"].includes(screen);
+  const showNav = (["home", "invoices", "profile"] as Screen[]).includes(screen);
 
   let body: React.ReactNode;
   if (screen === "home") body = <Dashboard go={go} />;
@@ -965,12 +1187,16 @@ export default function SettuPrototype() {
           {body}
         </div>
 
-        {showNav && (
+        {overlay === "waoverlay" && <ShareSheetOverlay go={go} invoice={ctx} />}
+        {overlay === "wacontacts" && <WhatsAppContacts go={go} invoice={ctx} />}
+        {overlay === "wachat" && <WhatsAppChat go={go} invoice={ctx} />}
+
+        {showNav && !overlay && (
           <div
             className="settu-nav fixed bottom-0 left-0 right-0 mx-auto flex items-center justify-around py-3 px-6"
             style={{ background: "#FFFFFFEE", backdropFilter: "blur(8px)", borderTop: "1px solid #E4DCC8" }}
           >
-            {tabs.map((t: any) => {
+            {tabs.map((t) => {
               const Icon = t.icon;
               const active = screen === t.id;
               return (
